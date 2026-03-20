@@ -1,0 +1,4 @@
+[submodule "UrbanToyGraph"]
+	path = UrbanToyGraph
+	url = https://github.com/csebastiao/UrbanToyGraph.git
+	branch = main
