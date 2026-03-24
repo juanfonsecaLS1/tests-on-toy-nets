@@ -442,19 +442,7 @@ cb_restr_2 = simplified_betweenness(node_order, G.edges(keys=False), dist_restr,
 ```
 
 ```{python}
-# Check if betweenness centrality is stored as edge attributes in G
-print("Checking edge attributes in graph G:")
-print()
 
-# Get first edge with all its attributes
-for u, v, k, data in G.edges(keys=True, data=True):
-    print(f"Edge {u}→{v} (key={k}): {data}")
-    break  # Just show first edge
-
-print()
-print("Available edge attributes:")
-sample_edge = list(G.edges(keys=True, data=True))[0]
-print(sample_edge[3].keys())
 ```
 
 
@@ -736,21 +724,6 @@ from superblockify.metrics.distances import calculate_path_distance_matrix
 ```
 
 ```{python}
-from superblockify import ResidentialPartitioner
-from superblockify.config import Config
-
-CITY_NAME, SEARCH_STR = Config.PLACES_SMALL[1]
-part = ResidentialPartitioner(
-    name=CITY_NAME + "_main", city_name=CITY_NAME, search_str=SEARCH_STR, unit="time"
-)
-part.run(calculate_metrics=False)
-
-# Intended use usually only with `run` method
-# or `calculate_metrics_before` partitioning
-node_list = part.get_sorted_node_list()
-```
-
-```{python}
 matrix, predecessors = calculate_path_distance_matrix(G, weight = "weight", node_order = node_order)
 ```
 
@@ -760,5 +733,7 @@ betweenness_centrality(G, node_order, matrix, predecessors, weight="weight")
 
 
 ```{python}
+ 
+    
 
 ```
