@@ -208,3 +208,8 @@ __marimo__/
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+
+
+# superblockify folders
+cache/*
+data/*
