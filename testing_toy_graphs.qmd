@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "Testing Betweenness Centrality on Toy Graphs"
 format: html
 ---
 
@@ -47,6 +47,14 @@ def compute_node_weights(edges_df, tessellation_df):
     return w
 ```
 
+A for loot to iterate over the toy graphs and compute different versions of the betweenness centrality:
+
+- Standard betweenness centrality using NetworkX's implementation.
+- Spatial betweenness centrality using the custom implementation as defined in the `spatial-centrality-pub` repository by Christian Werner (taken from https://github.com/christian-werner/spatial-centrality-pub).
+- Simplified betweenness centrality using the `superblockify` library, which assumes a single shortest path between node pairs.
+- Length scaled betweenness centrality using the same algorithm as the simplified version but appliying a scaling factor based on the lenght of the shortest path. 
+
+Graphical comparisons are saved in the plots directory of this respository.
 
 ```{python}
 graph_files = [f for f in os.listdir('UrbanToyGraph/demo/template_graph') if f.endswith('.graphml')]
@@ -200,3 +208,7 @@ axs[1, 1].set_title('Standard Betweenness Centrality')
 plt.show()
 
 ```
+
+
+
+Tests on the toy graphs show that the simplified implementation of BC computation may produce some unexpected results, as it assumes a single shortest path between node pairs, which may only be the case in real networks with unique edge weights. 
