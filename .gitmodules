@@ -9,3 +9,4 @@
 [submodule "cityseer-api"]
 	path = cityseer-api
 	url = https://github.com/benchmark-urbanism/cityseer-api.git
+	branch = dev
