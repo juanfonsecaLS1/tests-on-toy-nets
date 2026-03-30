@@ -9,6 +9,7 @@ sys.path.insert(0, 'spatial-centrality-pub/algo')
 import centrality as sbc
 import net_helper as nh
 import pandas as pd
+import geopandas as gpd
 
 from matplotlib.pyplot import plot
 import os
@@ -73,17 +74,16 @@ def compute_node_weights(edges_df, tessellation_df):
     return w
 ```
 
-A for loot to iterate over the toy graphs and compute different versions of the betweenness centrality:
+A for loop to iterate over real network extracts and compute different versions of the betweenness centrality:
 
 - Standard betweenness centrality using NetworkX's implementation.
 - Spatial betweenness centrality using the custom implementation as defined in the `spatial-centrality-pub` repository by Christian Werner (taken from https://github.com/christian-werner/spatial-centrality-pub).
 - Simplified betweenness centrality using the `superblockify` library, which assumes a single shortest path between node pairs.
 - Length scaled betweenness centrality using the same algorithm as the simplified version but appliying a scaling factor based on the lenght of the shortest path. 
 
-Graphical comparisons are saved in the plots directory of this respository.
+
 
 ```{python}
-
 for city_info in cities:
     # city_info = cities[0]
     city_name = city_info["name"]
@@ -93,52 +93,83 @@ for city_info in cities:
          ox.save_graphml(graph, graph_file)
     else:
         graph = ox.load_graphml(graph_file)
+    
     graph = ox.add_edge_speeds(graph)
     graph = ox.add_edge_travel_times(graph)
     graph_undirected = graph.to_undirected()
     nodes_gdf, edges_filtered = ox.graph_to_gdfs(graph_undirected)
     edges_filtered = edges_filtered.reset_index()
 
-    nodes_proj = nodes_gdf.to_crs(nodes_gdf.estimate_utm_crs())
-    edges_proj = edges_filtered.to_crs(nodes_proj.crs)
+    
+    
+    processed_net_file = f"graphs/{city_name}.gpkg"
 
-    envelope = nodes_proj.union_all().convex_hull.envelope    
-    buffer = envelope.buffer(0.15*(envelope.area/np.pi)**0.5) # Buffering 15% of the equivalent radius of the envelope
-    tessellation_nodes = mp.morphological_tessellation(nodes_proj, clip= buffer)
-    tessellation_nodes.index = nodes_proj.index
+    if not os.path.exists(processed_net_file):
+        nodes_proj = nodes_gdf.to_crs(nodes_gdf.estimate_utm_crs())
+        edges_proj = edges_filtered.to_crs(nodes_proj.crs)
 
-    tessellation_nodes['weight'] = tessellation_nodes.geometry.area
+        envelope = nodes_proj.union_all().convex_hull    
+        buffer = envelope.buffer(0.05*(envelope.area/np.pi)**0.5) # Buffering 5% of the equivalent radius of the hull
+        tessellation_nodes = mp.morphological_tessellation(nodes_proj, clip= buffer)
+        tessellation_nodes.index = nodes_proj.index
 
-    # node_weights = compute_node_weights(edges_gdf, tessellation)
-    c_standard = nx.edge_betweenness_centrality(graph, normalized=True, weight='travel_time')
-    c_spatial = sbc.spatial_betweenness_centrality(graph, tessellation_nodes, tessellation_nodes, normalized=True, weight='travel_time')
+        tessellation_nodes['weight'] = tessellation_nodes.geometry.area
 
-    node_order = list(graph.nodes)
-    matrix, predecessors = sb_calculate_path_distance_matrix(graph, weight = "travel_time", node_order = node_order)
-    sb_betweenness_centrality(graph, node_order, matrix, predecessors, weight="travel_time")
+        # node_weights = compute_node_weights(edges_gdf, tessellation)
+        c_standard = nx.edge_betweenness_centrality(graph, normalized=True, weight='travel_time')
+        c_spatial = sbc.spatial_betweenness_centrality(graph, tessellation_nodes, tessellation_nodes, normalized=True, weight='travel_time')
+
+        node_order = list(graph.nodes)
+        matrix, predecessors = sb_calculate_path_distance_matrix(graph, weight = "travel_time", node_order = node_order)
+        sb_betweenness_centrality(graph, node_order, matrix, predecessors, weight="travel_time")
+
+        # save the bc results in a file and load it if it already exists to avoid recomputation
 
 
-    tdf = pd.DataFrame({
-    'u': [u for u, v, k in graph.edges(keys=True)],
-    'v': [v for u, v, k in graph.edges(keys=True)],
-    'key': [k for u, v, k in graph.edges(keys=True)],
-    'edge_betweenness_normal': [data.get('edge_betweenness_normal', 0) for u, v, k, data in graph.edges(keys=True, data=True)],
-    'edge_betweenness_length': [data.get('edge_betweenness_length', 0) for u, v, k, data in graph.edges(keys=True, data=True)],
-    'edge_betweenness_linear': [data.get('edge_betweenness_linear', 0) for u, v, k, data in graph.edges(keys=True, data=True)],
-    'c_standard': [c_standard.get((u, v, k), 0) for u, v, k in graph.edges(keys=True)],
-    'c_spatial': [c_spatial.get((u, v, k), 0) for u, v, k in graph.edges(keys=True)]
-    })
-    edges_with_centrality = edges_proj.merge(
-    tdf, 
-    on=['u', 'v', 'key'], 
-    how='left'
-    )
+
+        tdf = pd.DataFrame({
+        'u': [u for u, v, k in graph.edges(keys=True)],
+        'v': [v for u, v, k in graph.edges(keys=True)],
+        'key': [k for u, v, k in graph.edges(keys=True)],
+        'edge_betweenness_normal': [data.get('edge_betweenness_normal', 0) for u, v, k, data in graph.edges(keys=True, data=True)],
+        'edge_betweenness_length': [data.get('edge_betweenness_length', 0) for u, v, k, data in graph.edges(keys=True, data=True)],
+        'edge_betweenness_linear': [data.get('edge_betweenness_linear', 0) for u, v, k, data in graph.edges(keys=True, data=True)],
+        'c_standard': [c_standard.get((u, v, k), 0) for u, v, k in graph.edges(keys=True)],
+        'c_spatial': [c_spatial.get((u, v, k), 0) for u, v, k in graph.edges(keys=True)]
+        })
+
+
+
+        edges_with_centrality = edges_proj.merge(
+        tdf, 
+        on=['u', 'v', 'key'], 
+        how='left'
+        )
+
+        edges_with_centrality.to_file(processed_net_file, layer='edges', driver='GPKG')
+        tessellation_nodes.to_file(processed_net_file, layer='tessellation', driver='GPKG')
+```
+
+A loop for producing the visual comparisons
+
+```{python}
+for city_info in cities:
+    city_name = city_info["name"]
+    processed_net_file = f"graphs/{city_name}.gpkg"
+
+
+    edges_with_centrality = gpd.read_file(processed_net_file, layer='edges')
+    tessellation_nodes = gpd.read_file(processed_net_file, layer='tessellation')
+
     # Create a directory to save the plots if it doesn't exist
     if not os.path.exists('plots_cities'):
         os.makedirs('plots_cities')
+    
     # Fill any NaN values with 0
     edges_with_centrality['c_standard'] = edges_with_centrality['c_standard'].fillna(0)
     edges_with_centrality['c_spatial'] = edges_with_centrality['c_spatial'].fillna(0)
+    edges_with_centrality['edge_betweenness_normal'] = edges_with_centrality['edge_betweenness_normal'].fillna(0)
+    edges_with_centrality['edge_betweenness_length'] = edges_with_centrality['edge_betweenness_length'].fillna(0)
 
     # An arrangement of 4 plots 2 x 2, the top row with the standard and spatial BC plots of the graph, and the bottom row with the scatter plot comparing the two measures and map with the spatial - standard BC.
     fig, axs = plt.subplots(2, 2, figsize=(12, 12))
@@ -157,7 +188,9 @@ for city_info in cities:
     axs[1, 0].set_title('Comparison of Standard BC vs Spatial BC')
     axs[1, 0].grid(True)
     edges_with_centrality['c_diff'] = edges_with_centrality['c_spatial'] - edges_with_centrality['c_standard']
-
+    edges_with_centrality['c_ratio'] = np.log(edges_with_centrality['c_spatial']) - np.log(edges_with_centrality['c_standard'])
+    edges_with_centrality['c_ratio'] = edges_with_centrality['c_ratio'].fillna(0)
+    
     # Plot tessellation with alpha based on area
     areas = tessellation_nodes.geometry.area
     areas_normalized = (areas - areas.min()) / (areas.max() - areas.min())
@@ -172,8 +205,8 @@ for city_info in cities:
     # Plot edges with difference centrality
     
     norm = TwoSlopeNorm(vcenter=0)
-    edges_with_centrality.plot(column='c_diff', ax=axs[1, 1], legend=True, cmap='coolwarm', norm=norm)
-    axs[1, 1].set_title('Difference (Spatial BC - Standard BC)')
+    edges_with_centrality.plot(column='c_ratio', ax=axs[1, 1], legend=True, cmap='coolwarm', norm=norm)
+    axs[1, 1].set_title('Log Ratio (Spatial BC/Standard BC)')
     fig.suptitle(f'City: {city_name}', fontsize=16, fontweight='bold')
     plt.tight_layout()
 
@@ -183,6 +216,7 @@ for city_info in cities:
     # plt.show()
 
     fig, axs = plt.subplots(2, 2, figsize=(12, 12))
+    
     # Get common color scale for both BC plots
     vmin = 0
     vmax = max(edges_with_centrality['c_standard'].max(),edges_with_centrality['edge_betweenness_normal'].max(), edges_with_centrality['edge_betweenness_length'].max())
@@ -202,6 +236,4 @@ for city_info in cities:
     filename = f"plots_cities/{city_name}_bc_comparison_sb.png"
     plt.savefig(filename, dpi=330, bbox_inches='tight')
     
-
 ```
-
