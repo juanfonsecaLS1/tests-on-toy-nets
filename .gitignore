@@ -214,5 +214,6 @@ __marimo__/
 cache/*
 data/*
 
-# city graphs data
+# city graphs/networks data
 graphs/*
+raw_nets_gpkg/*
