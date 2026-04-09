@@ -6,7 +6,3 @@
 	path = spatial-centrality-pub
 	url = https://github.com/juanfonsecaLS1/spatial-centrality-pub.git
 	branch = main
-[submodule "cityseer-api"]
-	path = cityseer-api
-	url = https://github.com/benchmark-urbanism/cityseer-api.git
-	branch = dev
