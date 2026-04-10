@@ -1,0 +1,107 @@
+---
+title: "Testing Betweenness Centrality on Toy Graphs"
+format: html
+---
+
+```{python}
+import sys
+sys.path.insert(0, 'UrbanToyGraph')
+from pandas.core.algorithms import mode
+import utg
+sys.path.insert(0, 'spatial-centrality-pub/algo')
+import centrality as sbc
+import net_helper as nh
+import pandas as pd
+import igraph as ig
+import math
+
+from matplotlib.pyplot import plot
+from matplotlib.animation import FuncAnimation
+import os
+import numpy as np
+import networkx as nx
+import osmnx as ox
+import matplotlib.pyplot as plt
+import momepy as mp
+
+from superblockify.metrics.measures import betweenness_centrality as sb_betweenness_centrality
+from superblockify.metrics.distances import calculate_path_distance_matrix as sb_calculate_path_distance_matrix
+```
+
+```{python}
+graph_files = [f for f in os.listdir('UrbanToyGraph/demo/template_graph') if f.endswith('.graphml')]
+
+for graph_file in graph_files:
+    # graph_file = graph_files[13]
+    graph = utg.load_graph(os.path.join('UrbanToyGraph/demo/template_graph',graph_file))
+    graph_osmnx = utg.make_osmnx_compatible(graph).to_undirected()
+    nodes_gdf, edges_gdf = ox.graph_to_gdfs(graph_osmnx)
+  
+    graph_ig = ig.Graph.from_networkx(graph_osmnx)
+    
+    # Calculate distance matrix for all pairs of nodes in the graph
+    c_bc_ig = graph_ig.edge_betweenness(cutoff=None, weights='length', directed=False)  
+    c_bc_ig_normalised = np.array(c_bc_ig) / ((len(graph_ig.vs) - 1) * (len(graph_ig.vs) - 2)*0.5)
+    
+       
+    to_limit = 100*(math.ceil(np.array(graph_ig.diameter(directed=True, unconn=True,weights="length"))/100))
+    matrix_dist = graph_ig.distances(weights='length', mode='all')
+    
+
+    bc_ig_cutoff = []
+
+    for limit in range(100, to_limit + 100, 100):
+        c_bc_ig_cutoff = np.array(graph_ig.betweenness(cutoff=limit, weights='length', directed=False))
+        
+        # count how many nodes are reachable within the cutoff distance
+        reachable_within_cutoff = np.sum(np.array(matrix_dist) <= limit, axis=1)
+        
+        c_bc_ig_cutoff_normalised = c_bc_ig_cutoff / ((reachable_within_cutoff - 1) * (reachable_within_cutoff - 2)*0.5)
+        bc_ig_cutoff.append(c_bc_ig_cutoff_normalised)
+        
+
+        
+
+
+        
+
+
+    
+```
+
+
+```{python}
+bc_ig_cutoff = []
+
+for limit in range(100, to_limit + 100, 100):
+    c_bc_ig_cutoff = np.array(graph_ig.betweenness(cutoff=limit, weights='length', directed=False))
+    
+    # count how many nodes are reachable within the cutoff distance
+    reachable_within_cutoff = np.sum(np.array(matrix_dist) <= limit, axis=1)
+    
+    c_bc_ig_cutoff_normalised = c_bc_ig_cutoff / ((reachable_within_cutoff - 1) * (reachable_within_cutoff - 2)*0.5)
+    bc_ig_cutoff.append(c_bc_ig_cutoff_normalised)
+
+
+# Create dataframe with correct orientation
+df_cutoff = pd.DataFrame(bc_ig_cutoff).T  # Transpose so rows are nodes, columns are cutoffs
+df_cutoff.columns = [f'cutoff_{limit}' for limit in range(100, to_limit + 100, 100)]
+
+edges_gdf_reset = edges_gdf.reset_index()
+
+edges_with_centrality = edges_gdf_reset.copy()
+
+for col in df_cutoff.columns:
+    source_cent = edges_gdf_reset['u'].map(df_cutoff[col])
+    target_cent = edges_gdf_reset['v'].map(df_cutoff[col])
+    edges_with_centrality[col] = (source_cent + target_cent) / 2
+    edges_with_centrality[col] = edges_with_centrality[col].fillna(0)
+
+for col in df_cutoff.columns:
+    fig, ax = plt.subplots(figsize=(8, 6))
+    edges_with_centrality.plot(column=col, ax=ax, cmap='viridis', legend=True)
+    plt.title(f'Betweenness Centrality with Cutoff {col.split("_")[1]}')
+    plt.show()
+    plt.close(fig)
+
+```
