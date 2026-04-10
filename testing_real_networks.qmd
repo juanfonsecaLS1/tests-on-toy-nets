@@ -222,7 +222,6 @@ for city_info in cities:
 
     fig, axs = plt.subplots(2, 3, figsize=(30, 14))
 
-
     # Get common color scale for both BC plots
     vmin = min(edges_with_centrality['c_standard'].min(), edges_with_centrality['c_spatial'].min())
     vmax = max(edges_with_centrality['c_standard'].max(), edges_with_centrality['c_spatial'].max())
@@ -327,22 +326,36 @@ for city_info in cities:
     # Fill any NaN values with 0
     edges_with_centrality['c_standard'] = edges_with_centrality['c_standard'].fillna(0)
     edges_with_centrality['c_spatial'] = edges_with_centrality['c_spatial'].fillna(0)
+    edges_with_centrality['c_pop'] = edges_with_centrality['c_pop'].fillna(0)
     edges_with_centrality['edge_betweenness_normal'] = edges_with_centrality['edge_betweenness_normal'].fillna(0)
-    edges_with_centrality['edge_betweenness_length'] = edges_with_centrality['edge_betweenness_length'].fillna(0)
 
     edges_with_centrality['top_20_standard'] = edges_with_centrality['c_standard'] >= edges_with_centrality['c_standard'].quantile(0.8)
     edges_with_centrality['top_20_spatial'] = edges_with_centrality['c_spatial'] >= edges_with_centrality['c_spatial'].quantile(0.8)
+    edges_with_centrality['top_20_pop'] = edges_with_centrality['c_pop'] >= edges_with_centrality['c_pop'].quantile(0.8)
     edges_with_centrality['top_20_sb_normal'] = edges_with_centrality['edge_betweenness_normal'] >= edges_with_centrality['edge_betweenness_normal'].quantile(0.8)
     edges_with_centrality['top_20_sb_length'] = edges_with_centrality['edge_betweenness_length'] >= edges_with_centrality['edge_betweenness_length'].quantile(0.8)
-
     edges_with_centrality['category'] = 'None'
     edges_with_centrality.loc[edges_with_centrality['top_20_standard'] & ~edges_with_centrality['top_20_spatial'], 'category'] = 'Standard Only'
-    edges_with_centrality.loc[~edges_with_centrality['top_20_standard'] & edges_with_centrality['top_20_spatial'], 'category'] = 'Spatial Only'
+    edges_with_centrality.loc[~edges_with_centrality['top_20_standard'] & edges_with_centrality['top_20_spatial'], 'category'] = 'Weighted Only'
     edges_with_centrality.loc[edges_with_centrality['top_20_standard'] & edges_with_centrality['top_20_spatial'], 'category'] = 'Both'
+
+    edges_with_centrality['category_pop'] = 'None'
+    edges_with_centrality.loc[edges_with_centrality['top_20_standard'] & ~edges_with_centrality['top_20_pop'], 'category_pop'] = 'Standard Only'
+    edges_with_centrality.loc[~edges_with_centrality['top_20_standard'] & edges_with_centrality['top_20_pop'], 'category_pop'] = 'Weighted Only'
+    edges_with_centrality.loc[edges_with_centrality['top_20_standard'] & edges_with_centrality['top_20_pop'], 'category_pop'] = 'Both'
 
     edges_with_centrality['thickness'] = 0.5
     edges_with_centrality.loc[edges_with_centrality['category'] != 'None', 'thickness'] = 2
 
+    colors = {
+        'None': 'lightgray',
+        'Standard Only': 'blue',
+        'Weighted Only': 'orange',
+        'Both': 'green'
+    }
+
+    # Plot for spatial vs standard comparison
+    
     fig, axes = plt.subplots(1, 2, figsize=(30, 10))
     edges_with_centrality.plot(color=edges_with_centrality['category'].map(colors), legend=True, linewidth=edges_with_centrality['thickness'], ax=axes[0])
     axes[0].set_title(f'Edge Categories by Betweenness Centrality - {city_name}')
@@ -350,6 +363,9 @@ for city_info in cities:
     for category, color in colors.items():
         subset = edges_with_centrality[edges_with_centrality['category'] == category]
         axes[1].scatter(subset['c_standard'], subset['c_spatial'], alpha=0.3, color=color, label=category)
+    # add the identity line
+    max_val = max(edges_with_centrality['c_standard'].max(), edges_with_centrality['c_spatial'].max())
+    axes[1].plot([0, max_val], [0, max_val], color='red', linestyle='--', label='Identity Line')
     axes[1].set_xlabel('Standard Betweenness Centrality')
     axes[1].set_ylabel('Spatial Betweenness Centrality')
     axes[1].set_title('Top 20% Edges by Betweenness Centrality')
@@ -359,6 +375,30 @@ for city_info in cities:
     plt.tight_layout()
     filename = f"plots_sparse_cities/{city_name}_bc_comparison_top20.png"
     plt.savefig(filename, dpi=330, bbox_inches='tight')
+    plt.close(fig)
+
+
+    fig, axes = plt.subplots(1, 2, figsize=(30, 10))
+    edges_with_centrality.plot(color=edges_with_centrality['category_pop'].map(colors), legend=True, linewidth=edges_with_centrality['thickness'], ax=axes[0])
+    axes[0].set_title(f'Edge Categories by Betweenness Centrality - {city_name}')
+    axes[0].axis('off')
+    for category, color in colors.items():
+        subset = edges_with_centrality[edges_with_centrality['category_pop'] == category]
+        axes[1].scatter(subset['c_standard'], subset['c_pop'], alpha=0.3, color=color, label=category)
+    # add the identity line
+    max_val = max(edges_with_centrality['c_standard'].max(), edges_with_centrality['c_pop'].max())
+    axes[1].plot([0, max_val], [0, max_val], color='red', linestyle='--', label='Identity Line')
+    axes[1].set_xlabel('Standard Betweenness Centrality')
+    axes[1].set_ylabel('Population Betweenness Centrality')
+    axes[1].set_title('Top 20% Edges by Betweenness Centrality')
+    axes[1].set_xscale('log')
+    axes[1].set_yscale('log')
+    axes[1].legend()
+    plt.tight_layout()
+    filename = f"plots_sparse_cities/{city_name}_bc_comparison_top20_pop.png"
+    plt.savefig(filename, dpi=330, bbox_inches='tight')
+    plt.close(fig)
     
 ```
+
 
