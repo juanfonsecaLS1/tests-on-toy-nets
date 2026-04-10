@@ -107,14 +107,15 @@ for graph_file in graph_files:
     edges_with_centrality['c_standard'] = edges_with_centrality['c_standard'].fillna(0)
     edges_with_centrality['c_spatial'] = edges_with_centrality['c_spatial'].fillna(0)
 
-    plt.figure(figsize=(8, 6))
-    plt.scatter(list(edges_with_centrality['c_standard']), list(edges_with_centrality['c_spatial']), alpha=0.5, color='purple')
-    plt.xlabel('Standard Betweenness Centrality')
-    plt.ylabel('Spatial Betweenness Centrality')
-    plt.title('Comparison of Standard BC vs Spatial BC')
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
+    # plt.figure(figsize=(8, 6))
+    # plt.scatter(list(edges_with_centrality['c_standard']), list(edges_with_centrality['c_spatial']), alpha=0.5, color='purple')
+    # plt.xlabel('Standard Betweenness Centrality')
+    # plt.ylabel('Spatial Betweenness Centrality')
+    # plt.title('Comparison of Standard BC vs Spatial BC')
+    # plt.grid(True)
+    # plt.tight_layout()
+    # # plt.show()
+    # plt.close(fig)
 
     # An arrangement of 4 plots 2 x 2, the top row with the standard and spatial BC plots of the graph, and the bottom row with the scatter plot comparing the two measures and map with the spatial - standard BC.
     fig, axs = plt.subplots(2, 2, figsize=(12, 12))
@@ -158,6 +159,7 @@ for graph_file in graph_files:
     filename = f"plots/{graph_file.replace('.graphml', '')}_bc_comparison.png"
     plt.savefig(filename, dpi=330, bbox_inches='tight')
     # plt.show()
+    plt.close(fig)
 
     
 
@@ -181,6 +183,7 @@ for graph_file in graph_files:
     
     filename = f"plots/{graph_file.replace('.graphml', '')}_bc_comparison_sb.png"
     plt.savefig(filename, dpi=330, bbox_inches='tight')
+    plt.close(fig)
     
 
 ```
