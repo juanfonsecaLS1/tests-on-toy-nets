@@ -1,6 +1,8 @@
 ---
 title: "Testing Betweenness Centrality on Toy Graphs"
-format: html
+format:
+  html:
+    embed-resources: true
 ---
 
 ```{python}
@@ -32,6 +34,9 @@ from superblockify.metrics.distances import calculate_path_distance_matrix as sb
 graph_files = [f for f in os.listdir('UrbanToyGraph/demo/template_graph') if f.endswith('.graphml')]
 
 for graph_file in graph_files:
+    # Extract graph name without extension
+    graph_name = graph_file.replace('.graphml', '')
+    
     # graph_file = graph_files[13]
     graph = utg.load_graph(os.path.join('UrbanToyGraph/demo/template_graph',graph_file))
     graph_osmnx = utg.make_osmnx_compatible(graph).to_undirected()
@@ -39,69 +44,125 @@ for graph_file in graph_files:
   
     graph_ig = ig.Graph.from_networkx(graph_osmnx)
     
-    # Calculate distance matrix for all pairs of nodes in the graph
-    c_bc_ig = graph_ig.edge_betweenness(cutoff=None, weights='length', directed=False)  
-    c_bc_ig_normalised = np.array(c_bc_ig) / ((len(graph_ig.vs) - 1) * (len(graph_ig.vs) - 2)*0.5)
-    
-       
-    to_limit = 100*(math.ceil(np.array(graph_ig.diameter(directed=True, unconn=True,weights="length"))/100))
-    matrix_dist = graph_ig.distances(weights='length', mode='all')
-    
+    linegraph = graph_ig.linegraph()
+
+    # Assign edge lengths to the line graph as mean of incident edges
+    for edge in linegraph.es:
+        source_edge_idx = edge.source  # Index of an edge in the original graph
+        target_edge_idx = edge.target  # Index of an edge in the original graph
+
+        source_edge_length = graph_ig.es[source_edge_idx]['length']
+        target_edge_length = graph_ig.es[target_edge_idx]['length']
+
+        edge['length'] = (source_edge_length + target_edge_length) / 2
+
+    to_limit = 100 * math.ceil(np.array(linegraph.diameter(weights='length'))/100)
+
+    # Transfer the osmid attribute from the original graph edges to the line graph vertices
+    for vertex in linegraph.vs:
+        original_edge_idx = vertex.index  # This is the index of the edge in the original graph
+        vertex['osmid'] = graph_ig.es[original_edge_idx]['osmid']
+
+    matrix_dist_linegraph = linegraph.distances(weights='length', mode='all')
 
     bc_ig_cutoff = []
+    denom_cutoff = []
 
     for limit in range(100, to_limit + 100, 100):
-        c_bc_ig_cutoff = np.array(graph_ig.betweenness(cutoff=limit, weights='length', directed=False))
+        bc_lg = np.array(linegraph.betweenness(cutoff = limit, weights='length', directed=False))
         
         # count how many nodes are reachable within the cutoff distance
-        reachable_within_cutoff = np.sum(np.array(matrix_dist) <= limit, axis=1)
+        reachable_within_cutoff = np.sum(np.array(matrix_dist_linegraph) <= limit, axis=1)
         
-        c_bc_ig_cutoff_normalised = c_bc_ig_cutoff / ((reachable_within_cutoff - 1) * (reachable_within_cutoff - 2)*0.5)
-        bc_ig_cutoff.append(c_bc_ig_cutoff_normalised)
+        bc_ig_cutoff.append(bc_lg)
+        denom_cutoff.append((reachable_within_cutoff - 1) * (reachable_within_cutoff - 2) * 0.5)
+
+    # Create dataframe with correct orientation
+    df_bc_cutoff = pd.DataFrame(bc_ig_cutoff).T  # Transpose so rows are nodes, columns are cutoffs
+    df_bc_cutoff.columns = [f'cutoff_{limit}' for limit in range(100, to_limit + 100, 100)]
+
+    df_denom = pd.DataFrame(denom_cutoff).T  # Transpose so rows are nodes, columns are cutoffs
+    df_denom.columns = [f'denom_{limit}' for limit in range(100, to_limit + 100, 100)]
+
+    # add a column with the osmid attribute from the vertices of the line graph in the df_bc_cutoff and df_denom dataframes
+    df_bc_cutoff['osmid'] = linegraph.vs['osmid']
+    df_denom['osmid'] = linegraph.vs['osmid']
+
+    # Join the dataframes on the osmid column to the edges_gdf dataframe
+    edges_gdf_with_centrality = edges_gdf.merge(df_bc_cutoff, left_on='osmid', right_on='osmid', how='left')
+    edges_gdf_with_centrality = edges_gdf_with_centrality.merge(df_denom, left_on='osmid', right_on='osmid', how='left')
+
+    # calculate the deciles for each cutoff column in the edges_gdf_with_centrality dataframe
+    for col in df_bc_cutoff.columns[:-1]:  # Exclude the osmid column
+        edges_gdf_with_centrality[f'{col}_decile'] = pd.qcut(edges_gdf_with_centrality[col], 10, labels=False, duplicates='drop') + 1  # Add 1 to make deciles start from 1 instead of 0
+
+    # Normalise the centrality values by dividing by the corresponding denominator for each cutoff and compute the deciles for the normalised values
+    for limit in range(100, to_limit + 100, 100):
+        edges_gdf_with_centrality[f'cutoff_{limit}_normalised'] = edges_gdf_with_centrality[f'cutoff_{limit}'] / edges_gdf_with_centrality[f'denom_{limit}']
+        edges_gdf_with_centrality[f'cutoff_{limit}_normalised_decile'] = pd.qcut(edges_gdf_with_centrality[f'cutoff_{limit}_normalised'], 10, labels=False, duplicates='drop') + 1  # Add 1 to make deciles start from 1 instead of 0
+
+    # Show a 2x1 plot for the centrality deciles on the edges of the graph for each cutoff value, with the first plot showing the deciles for the raw centrality values and the second plot showing the deciles for the normalised centrality values.
+    # for limit in range(100, to_limit + 100, 100):
+    #     fig, ax = plt.subplots(1, 2, figsize=(16, 6))
         
-
+    #     edges_gdf_with_centrality.plot(column=f'cutoff_{limit}_decile', ax=ax[0], cmap='viridis', legend=True)
+    #     ax[0].set_title(f'Betweenness Centrality Deciles with Cutoff {limit}')
         
-
-
+    #     edges_gdf_with_centrality.plot(column=f'cutoff_{limit}_normalised_decile', ax=ax[1], cmap='viridis', legend=True)
+    #     ax[1].set_title(f'Normalised Betweenness Centrality Deciles with Cutoff {limit}')
         
+    #     plt.savefig(f'plots/{graph_name}_comparison_{limit}.png', dpi=300, bbox_inches='tight')
+    #     plt.show()
+    #     plt.close(fig)
 
+    # Create a grid of plots showing the normalised betweenness deciles
+    # Vertical axis: BC cutoff values, Horizontal axis: denominator cutoff values
+    # Blank cells when denom_cutoff > bc_cutoff
 
-    
-```
+    cutoff_values = list(range(100, to_limit + 100, 100))
+    n_cutoffs = len(cutoff_values)
 
+    # Create a grid of subplots
+    fig, axes = plt.subplots(n_cutoffs, n_cutoffs, figsize=(32, 32))
 
-```{python}
-bc_ig_cutoff = []
+    # For each combination of BC cutoff (rows) and denominator cutoff (columns)
+    for bc_idx, bc_cutoff in enumerate(cutoff_values):
+        for denom_idx, denom_cutoff in enumerate(cutoff_values):
+            ax = axes[bc_idx, denom_idx]
+            
+            # If denominator cutoff is higher than BC cutoff, leave blank
+            if denom_cutoff > bc_cutoff:
+                ax.axis('off')
+            else:
+                # Calculate normalized centrality as BC at bc_cutoff / denom at denom_cutoff
+                bc_col = f'cutoff_{bc_cutoff}'
+                denom_col = f'denom_{denom_cutoff}'
+                
+                normalised = edges_gdf_with_centrality[bc_col] / edges_gdf_with_centrality[denom_col]
+                
+                # Calculate deciles
+                deciles = pd.qcut(normalised, 10, labels=False, duplicates='drop') + 1
+                
+                # Plot
+                temp_gdf = edges_gdf_with_centrality.copy()
+                temp_gdf['temp_decile'] = deciles
+                temp_gdf.plot(column='temp_decile', ax=ax, cmap='viridis', legend=False)
+                
+                # Add text labels on the left-most column for BC cutoffs
+                if denom_idx == 0:
+                    ax.text(-0.5, 0.5, f'BC: {bc_cutoff}', transform=ax.transAxes, 
+                           fontsize=10, verticalalignment='center', horizontalalignment='right', fontweight='bold')
+                
+                # Add text labels on the bottom row for denominator cutoffs
+                if bc_idx == n_cutoffs - 1:
+                    ax.text(0.5, -0.1, f'Denom: {denom_cutoff}', transform=ax.transAxes, 
+                           fontsize=10, verticalalignment='top', horizontalalignment='center', fontweight='bold')
+                
+                ax.set_axis_off()
 
-for limit in range(100, to_limit + 100, 100):
-    c_bc_ig_cutoff = np.array(graph_ig.betweenness(cutoff=limit, weights='length', directed=False))
-    
-    # count how many nodes are reachable within the cutoff distance
-    reachable_within_cutoff = np.sum(np.array(matrix_dist) <= limit, axis=1)
-    
-    c_bc_ig_cutoff_normalised = c_bc_ig_cutoff / ((reachable_within_cutoff - 1) * (reachable_within_cutoff - 2)*0.5)
-    bc_ig_cutoff.append(c_bc_ig_cutoff_normalised)
-
-
-# Create dataframe with correct orientation
-df_cutoff = pd.DataFrame(bc_ig_cutoff).T  # Transpose so rows are nodes, columns are cutoffs
-df_cutoff.columns = [f'cutoff_{limit}' for limit in range(100, to_limit + 100, 100)]
-
-edges_gdf_reset = edges_gdf.reset_index()
-
-edges_with_centrality = edges_gdf_reset.copy()
-
-for col in df_cutoff.columns:
-    source_cent = edges_gdf_reset['u'].map(df_cutoff[col])
-    target_cent = edges_gdf_reset['v'].map(df_cutoff[col])
-    edges_with_centrality[col] = (source_cent + target_cent) / 2
-    edges_with_centrality[col] = edges_with_centrality[col].fillna(0)
-
-for col in df_cutoff.columns:
-    fig, ax = plt.subplots(figsize=(8, 6))
-    edges_with_centrality.plot(column=col, ax=ax, cmap='viridis', legend=True)
-    plt.title(f'Betweenness Centrality with Cutoff {col.split("_")[1]}')
+    plt.tight_layout(pad=0.1)
+    plt.savefig(f'plots/{graph_name}_grid.png', dpi=300, bbox_inches='tight')
     plt.show()
     plt.close(fig)
-
 ```
+
