@@ -19,6 +19,7 @@ import math
 
 from matplotlib.pyplot import plot
 from matplotlib.animation import FuncAnimation
+from matplotlib.colors import TwoSlopeNorm
 import os
 import numpy as np
 import networkx as nx
@@ -121,48 +122,105 @@ for graph_file in graph_files:
 
     cutoff_values = list(range(100, to_limit + 100, 100))
     n_cutoffs = len(cutoff_values)
+    if not os.path.exists('plots'):
+        os.makedirs('plots')
 
-    # Create a grid of subplots
-    fig, axes = plt.subplots(n_cutoffs, n_cutoffs, figsize=(32, 32))
+    # if grid already exists or number of cutoffs is less than 2, skip plotting
+    if not (os.path.exists(f'plots/{graph_name}_grid.png') or n_cutoffs < 2):
+        print(f'Creating grid plot for {graph_name}...')
 
-    # For each combination of BC cutoff (rows) and denominator cutoff (columns)
-    for bc_idx, bc_cutoff in enumerate(cutoff_values):
-        for denom_idx, denom_cutoff in enumerate(cutoff_values):
-            ax = axes[bc_idx, denom_idx]
+
+        # Create a grid of subplots
+        fig, axes = plt.subplots(n_cutoffs, n_cutoffs, figsize=(32, 32))
+
+        # For each combination of BC cutoff (rows) and denominator cutoff (columns)
+        for bc_idx, bc_cutoff in enumerate(cutoff_values):
+            for denom_idx, denom_cutoff in enumerate(cutoff_values):
+                ax = axes[bc_idx, denom_idx]
+
+                # If denominator cutoff is higher than BC cutoff, leave blank
+                if denom_cutoff > bc_cutoff:
+                    ax.axis('off')
+                else:
+                    # Calculate normalized centrality as BC at bc_cutoff / denom at denom_cutoff
+                    bc_col = f'cutoff_{bc_cutoff}'
+                    denom_col = f'denom_{denom_cutoff}'
+
+                    normalised = edges_gdf_with_centrality[bc_col] / edges_gdf_with_centrality[denom_col]
+
+                    # Calculate deciles
+                    deciles = pd.qcut(normalised, 10, labels=False, duplicates='drop') + 1
+
+                    # Plot
+                    temp_gdf = edges_gdf_with_centrality.copy()
+                    temp_gdf['temp_decile'] = deciles
+                    temp_gdf.plot(column='temp_decile', ax=ax, cmap='viridis', legend=False)
+
+                    # Add text labels on the left-most column for BC cutoffs
+                    if denom_idx == 0:
+                        ax.text(-0.5, 0.5, f'BC: {bc_cutoff}', transform=ax.transAxes, 
+                               fontsize=10, verticalalignment='center', horizontalalignment='right', fontweight='bold')
+
+                    # Add text labels on the bottom row for denominator cutoffs
+                    if bc_idx == n_cutoffs - 1:
+                        ax.text(0.5, -0.1, f'Denom: {denom_cutoff}', transform=ax.transAxes, 
+                               fontsize=10, verticalalignment='top', horizontalalignment='center', fontweight='bold')
+
+                    ax.set_axis_off()
+
+        plt.tight_layout(pad=0.1)
+        plt.savefig(f'plots/{graph_name}_grid.png', dpi=300, bbox_inches='tight')
+        plt.show()
+        plt.close(fig)
+    else:
+        print(f'Grid plot for {graph_name} already exists, skipping plotting.')
+
+    # A plot showing the difference in deciles between all BC cutoffs and a fixed denominator cutoff (the maximum bc cutoff) to see how the BC cutoff affects the decile distribution when the denominator cutoff is fixed.
+
+    if not (os.path.exists(f'plots/{graph_name}_fixed_denom_comparison.png') or n_cutoffs < 2):
+        fixed_denom_cutoff = cutoff_values[-1]  # Use the maximum BC cutoff as the fixed denominator cutoff
+        # the figsize depends on the number of cutoffs, adjust accordingly
+
+        fig, axes = plt.subplots(1, n_cutoffs, figsize=(5 * n_cutoffs, 5))  
+
+        for bc_idx, bc_cutoff in enumerate(cutoff_values):
+            ax = axes[bc_idx]
+
+            bc_col = f'cutoff_{bc_cutoff}'
+            denom_col = f'denom_{fixed_denom_cutoff}'
+
+            difference = edges_gdf_with_centrality[bc_col] - edges_gdf_with_centrality[denom_col]
+
+            # Create a divergent colour scale centered at 0
+            # Alternative: asymmetric but must cross zero
+            diff_min = difference.min()
+            diff_max = difference.max()
+
+            if diff_min >= 0:  # All positive
+                vmin = -diff_min
+                vmax = diff_max
+            elif diff_max <= 0:  # All negative
+                vmin = diff_min
+                vmax = -diff_max
+            else:  # Already crosses zero
+                vmin = diff_min
+                vmax = diff_max
+
+            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
             
-            # If denominator cutoff is higher than BC cutoff, leave blank
-            if denom_cutoff > bc_cutoff:
-                ax.axis('off')
-            else:
-                # Calculate normalized centrality as BC at bc_cutoff / denom at denom_cutoff
-                bc_col = f'cutoff_{bc_cutoff}'
-                denom_col = f'denom_{denom_cutoff}'
-                
-                normalised = edges_gdf_with_centrality[bc_col] / edges_gdf_with_centrality[denom_col]
-                
-                # Calculate deciles
-                deciles = pd.qcut(normalised, 10, labels=False, duplicates='drop') + 1
-                
-                # Plot
-                temp_gdf = edges_gdf_with_centrality.copy()
-                temp_gdf['temp_decile'] = deciles
-                temp_gdf.plot(column='temp_decile', ax=ax, cmap='viridis', legend=False)
-                
-                # Add text labels on the left-most column for BC cutoffs
-                if denom_idx == 0:
-                    ax.text(-0.5, 0.5, f'BC: {bc_cutoff}', transform=ax.transAxes, 
-                           fontsize=10, verticalalignment='center', horizontalalignment='right', fontweight='bold')
-                
-                # Add text labels on the bottom row for denominator cutoffs
-                if bc_idx == n_cutoffs - 1:
-                    ax.text(0.5, -0.1, f'Denom: {denom_cutoff}', transform=ax.transAxes, 
-                           fontsize=10, verticalalignment='top', horizontalalignment='center', fontweight='bold')
-                
-                ax.set_axis_off()
+            # Plot using divergent colormap
+            temp_gdf = edges_gdf_with_centrality.copy()
+            temp_gdf['difference'] = difference
+            temp_gdf.plot(column='difference', ax=ax, cmap='coolwarm', legend=False, norm=norm)
 
-    plt.tight_layout(pad=0.1)
-    plt.savefig(f'plots/{graph_name}_grid.png', dpi=300, bbox_inches='tight')
-    plt.show()
-    plt.close(fig)
+            ax.set_title(f'BC Cutoff: {bc_cutoff} | Denom Cutoff: {fixed_denom_cutoff}', fontsize=10)
+
+            ax.set_axis_off()
+        plt.tight_layout(pad=0.1)
+        plt.savefig(f'plots/{graph_name}_fixed_denom_comparison.png', dpi=300, bbox_inches='tight')
+        plt.show()
+        plt.close(fig)
+
+    
 ```
 
