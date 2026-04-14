@@ -1,0 +1,161 @@
+---
+title: "Testing Betweenness Centrality on Toy Graphs"
+format:
+  html:
+    embed-resources: true
+---
+
+```{python}
+import sys
+sys.path.insert(0, 'UrbanToyGraph')
+from pandas.core.algorithms import mode
+import utg
+sys.path.insert(0, 'spatial-centrality-pub/algo')
+import centrality as sbc
+import net_helper as nh
+import pandas as pd
+import igraph as ig
+import math
+
+from matplotlib.pyplot import plot
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+import os
+import numpy as np
+import networkx as nx
+import osmnx as ox
+import matplotlib.pyplot as plt
+import momepy as mp
+
+from superblockify.metrics.measures import betweenness_centrality as sb_betweenness_centrality
+from superblockify.metrics.distances import calculate_path_distance_matrix as sb_calculate_path_distance_matrix
+```
+
+```{python}
+graph_files = [f for f in os.listdir('UrbanToyGraph/demo/template_graph') if f.endswith('.graphml')]
+
+for graph_file in graph_files:
+    # Extract graph name without extension
+    graph_name = graph_file.replace('.graphml', '')
+    
+    # graph_file = graph_files[13]
+    graph = utg.load_graph(os.path.join('UrbanToyGraph/demo/template_graph',graph_file))
+    graph_osmnx = utg.make_osmnx_compatible(graph).to_undirected()
+    nodes_gdf, edges_gdf = ox.graph_to_gdfs(graph_osmnx)
+  
+    graph_ig = ig.Graph.from_networkx(graph_osmnx)
+    
+    linegraph = graph_ig.linegraph()
+
+    # Assign edge lengths to the line graph as mean of incident edges
+    for edge in linegraph.es:
+        source_edge_idx = edge.source  # Index of an edge in the original graph
+        target_edge_idx = edge.target  # Index of an edge in the original graph
+
+        source_edge_length = graph_ig.es[source_edge_idx]['length']
+        target_edge_length = graph_ig.es[target_edge_idx]['length']
+
+        edge['length'] = (source_edge_length + target_edge_length) / 2
+
+    to_limit = 100 * math.ceil(np.array(linegraph.diameter(weights='length'))/100)
+
+    # Transfer the osmid attribute from the original graph edges to the line graph vertices
+    for vertex in linegraph.vs:
+        original_edge_idx = vertex.index  # This is the index of the edge in the original graph
+        vertex['osmid'] = graph_ig.es[original_edge_idx]['osmid']
+
+    matrix_dist_linegraph = linegraph.distances(weights='length', mode='all')
+
+    bc_ig_cutoff = []
+    denom_cutoff = []
+
+    for limit in range(100, to_limit + 100, 100):
+        bc_lg = np.array(linegraph.betweenness(cutoff = limit, weights='length', directed=False))
+        
+        # count how many nodes are reachable within the cutoff distance
+        reachable_within_cutoff = np.sum(np.array(matrix_dist_linegraph) <= limit, axis=1)
+        
+        bc_ig_cutoff.append(bc_lg)
+        denom_cutoff.append((reachable_within_cutoff - 1) * (reachable_within_cutoff - 2) * 0.5)
+
+    # Create dataframe with correct orientation
+    df_bc_cutoff = pd.DataFrame(bc_ig_cutoff).T  # Transpose so rows are nodes, columns are cutoffs
+    df_bc_cutoff.columns = [f'cutoff_{limit}' for limit in range(100, to_limit + 100, 100)]
+
+    df_denom = pd.DataFrame(denom_cutoff).T  # Transpose so rows are nodes, columns are cutoffs
+    df_denom.columns = [f'denom_{limit}' for limit in range(100, to_limit + 100, 100)]
+
+    # add a column with the osmid attribute from the vertices of the line graph in the df_bc_cutoff and df_denom dataframes
+    df_bc_cutoff['osmid'] = linegraph.vs['osmid']
+    df_denom['osmid'] = linegraph.vs['osmid']
+
+    # Join the dataframes on the osmid column to the edges_gdf dataframe
+    edges_gdf_with_centrality = edges_gdf.merge(df_bc_cutoff, left_on='osmid', right_on='osmid', how='left')
+    edges_gdf_with_centrality = edges_gdf_with_centrality.merge(df_denom, left_on='osmid', right_on='osmid', how='left')
+
+    # calculate the deciles for each cutoff column in the edges_gdf_with_centrality dataframe
+    for col in df_bc_cutoff.columns[:-1]:  # Exclude the osmid column
+        edges_gdf_with_centrality[f'{col}_decile'] = pd.qcut(edges_gdf_with_centrality[col], 10, labels=False, duplicates='drop') + 1  # Add 1 to make deciles start from 1 instead of 0
+
+    # Normalise the centrality values by dividing by the corresponding denominator for each cutoff and compute the deciles for the normalised values
+    for limit in range(100, to_limit + 100, 100):
+        edges_gdf_with_centrality[f'cutoff_{limit}_normalised'] = edges_gdf_with_centrality[f'cutoff_{limit}'] / edges_gdf_with_centrality[f'denom_{limit}']
+        edges_gdf_with_centrality[f'cutoff_{limit}_normalised_decile'] = pd.qcut(edges_gdf_with_centrality[f'cutoff_{limit}_normalised'], 10, labels=False, duplicates='drop') + 1  # Add 1 to make deciles start from 1 instead of 0
+
+
+    cutoff_values = list(range(100, to_limit + 100, 100))
+    n_cutoffs = len(cutoff_values)
+    if not os.path.exists('plots'):
+        os.makedirs('plots')
+
+    # A plot showing an adjusted BC  i.e. BC at the maximum cutoff minus BC at other cutoffs to see if this reduces the effect of density.
+
+    if not (os.path.exists(f'plots/{graph_name}_bc_cutoff_comparison.png') or n_cutoffs < 2):
+        fixed_bc_cutoff = cutoff_values[-1]  # Use the maximum BC cutoff as the fixed BC cutoff
+        bc_baseline = f'cutoff_{fixed_bc_cutoff}'
+
+        fig, axes = plt.subplots(1, n_cutoffs, figsize=(5 * n_cutoffs, 5))  
+
+        # First, compute all BC values to determine actual data range
+        all_bc_values = []
+        for bc_cutoff in cutoff_values:
+            bc_col = f'cutoff_{bc_cutoff}'
+            bc_values = edges_gdf_with_centrality[bc_col]
+            all_bc_values.append(bc_values)
+        
+        # Compute differences in BC values (baseline is the last cutoff)
+        all_differences = []
+        for bc_values in all_bc_values:
+            difference = edges_gdf_with_centrality[bc_baseline] - bc_values
+            all_differences.append(difference)
+
+
+        global_min = 0
+        global_max = max(difference.max() for difference in all_differences)
+
+        # apply a sequential colormap to the differences in BC values for each cutoff compared to the baseline
+
+        norm = Normalize(vmin=0, vmax=global_max)
+
+        for bc_idx, bc_cutoff in enumerate(cutoff_values):
+            ax = axes[bc_idx]
+            
+            difference = all_differences[bc_idx]
+            
+            # Plot using divergent colormap
+            temp_gdf = edges_gdf_with_centrality.copy()
+            temp_gdf['difference'] = difference
+            temp_gdf.plot(column='difference', ax=ax, cmap='viridis', legend=False, vmin=global_min, vmax=global_max)
+
+            ax.set_title(f'BC Cutoff: {bc_cutoff} | Baseline BC Cutoff: {fixed_bc_cutoff}', fontsize=10)
+
+            ax.set_axis_off()
+
+        plt.tight_layout()
+        plt.savefig(f'plots/{graph_name}_bc_cutoff_comparison.png', dpi=300)
+        plt.show()
+        plt.close(fig)
+
+    
+```
+
