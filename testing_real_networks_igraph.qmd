@@ -1,0 +1,192 @@
+---
+title: "Testing Betweenness Centrality on Real Networks"
+format: html
+---
+
+```{python}
+import sys
+import pandas as pd
+from pandas.util.version import Infinity
+from igraph import cut
+import geopandas as gpd
+import time
+import igraph as ig
+import math
+
+from matplotlib.pyplot import plot
+import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+
+from matplotlib.pyplot import plot
+import os
+import numpy as np
+import networkx as nx
+import osmnx as ox
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon as MplPolygon
+from matplotlib.colors import TwoSlopeNorm
+import momepy as mp
+```
+
+Defining the cities and some parameters for extracting the real networks.
+
+```{python}
+# City coordinates and buffer
+cities = [
+    {"name": "Lima", "lat": -12.077948042115647, "lon": -77.05096688507561},
+    {"name": "Brussels", "lat": 50.856117793777145, "lon": 4.381718424984715},
+    # {"name": "Rome", "lat": 41.89900799198937, "lon": 12.512797548177907},
+    {"name": "Cairo", "lat": 30.036716997454857, "lon": 31.23947439245143},
+    {"name": "Salt Lake City", "lat": 40.75984495218752, "lon": -111.88769690322184},
+    {"name": "Bogota", "lat": 4.646242884611647, "lon": -74.08436455625211},
+    {"name": "Leeds", "lat": 53.81303429075668,  "lon": -1.508881353201933},
+    {"name": "Milton Keynes", "lat": 52.0367171540023, "lon": -0.7324001661371712},
+    {"name": "Lisbon", "lat": 38.72778849555562, "lon": -9.162267565552924},
+    {"name": "New York", "lat": 40.7589664816669, "lon": -73.96121069380527},
+    {"name": "Brasilia", "lat": -15.76133509896713, "lon": -47.88377302616466},
+    {"name": "Sao Paulo", "lat": -23.54468352821393, "lon": -46.67047368527096},
+
+]
+
+BUFFER_M = 2500 
+NETWORK_TYPE = "drive"
+UNIT = "time"
+```
+
+
+
+```{python}
+for city_info in cities:
+    # city_info = cities[0]
+    city_name = city_info["name"]
+    
+    if not os.path.exists(f'outputs_igraph/{city_name}_edges_bc_undirected.gpkg'):
+            
+        graph_file = f"graphs/small/{city_name}.graphml"
+        if not os.path.exists(graph_file):
+             graph = ox.graph_from_point((city_info["lat"], city_info["lon"]),
+             dist= BUFFER_M,
+             network_type=NETWORK_TYPE,
+             simplify=True,
+             custom_filter=None)
+             ox.save_graphml(graph, graph_file)
+        else:
+            graph = ox.load_graphml(graph_file)
+
+        graph = ox.add_edge_speeds(graph)
+        graph = ox.add_edge_travel_times(graph)
+        graph = ox.project_graph(graph)
+
+        graph_ig = ig.Graph.from_networkx(graph)
+
+        bc_full = graph_ig.edge_betweenness(cutoff = None, weights='travel_time', directed=True)
+
+        graph_diameter = graph_ig.diameter(weights='travel_time', directed=True)
+
+        nodes_gdf, edges_gdf = ox.graph_to_gdfs(graph)
+
+        cutoffs = [30,60,120,180,None]
+
+        if not os.path.exists('outputs_igraph'):
+            os.makedirs('outputs_igraph')
+
+        for cutoff in cutoffs:
+            edges_gdf[f'cutoff_{cutoff}'] = graph_ig.edge_betweenness(cutoff = cutoff, weights='travel_time', directed=True)
+
+
+        # Get BC columns that were added to edges_gdf
+        bc_columns = [col for col in edges_gdf.columns if col.startswith('cutoff_')]
+
+        # Reset index to convert u, v, key from index to columns
+        edges_gdf_reset = edges_gdf.reset_index(drop=False).copy()
+
+        # Normalize u,v so u < v for undirected edges
+        edges_gdf_reset['u_norm'] = edges_gdf_reset[['u', 'v']].min(axis=1)
+        edges_gdf_reset['v_norm'] = edges_gdf_reset[['u', 'v']].max(axis=1)
+
+        # Group by normalized edge, sum BC values, and take first geometry
+        edges_undirected_bc_gdf = edges_gdf_reset.groupby(['u_norm', 'v_norm'], as_index=False).agg({
+            **{col: 'sum' for col in bc_columns},
+            'geometry': 'first'  # Keep first geometry of the edge pair
+        })
+
+        # Rename normalized columns back to u, v
+        edges_undirected_bc_gdf = edges_undirected_bc_gdf.rename(columns={'u_norm': 'u', 'v_norm': 'v'})
+
+        # Convert back to GeoDataFrame
+        edges_undirected_bc_gdf = gpd.GeoDataFrame(edges_undirected_bc_gdf, geometry='geometry', crs=edges_gdf.crs)
+
+        edges_undirected_bc_gdf.to_file(f'outputs_igraph/{city_name}_edges_bc_undirected.gpkg', driver='GPKG')
+
+```
+
+Create comparison plots: raw adjusted BC and changes in deciles
+
+```{python}
+# Create comparison plots: raw adjusted BC and changes in deciles
+for city_info in cities:
+    city_name = city_info["name"]
+    geopackage_file = f'outputs_igraph/{city_name}_edges_bc_undirected.gpkg'
+    
+    if os.path.exists(geopackage_file):
+        edges_undirected_bc_gdf = gpd.read_file(geopackage_file)
+        
+        # Fill NaN values with 0
+        bc_columns = [col for col in edges_undirected_bc_gdf.columns if col.startswith('cutoff_')]
+        for col in bc_columns:
+            edges_undirected_bc_gdf[col] = edges_undirected_bc_gdf[col].fillna(0)
+        
+        # Create directory for plots if it doesn't exist
+        if not os.path.exists('plots_cities'):
+            os.makedirs('plots_cities')
+        
+        # Define the small cutoffs to compare against cutoff_None
+        small_cutoffs = [30, 60, 120, 180]
+        
+        # Create 4x2 plot (4 rows for each cutoff, 2 columns for raw difference and decile change)
+        fig, axs = plt.subplots(4, 2, figsize=(16, 20))
+        
+        for row_idx, cutoff in enumerate(small_cutoffs):
+            # Calculate raw difference: cutoff_None - cutoff_small
+            raw_difference = edges_undirected_bc_gdf['cutoff_None'] - edges_undirected_bc_gdf[f'cutoff_{cutoff}']
+            
+            # Log transform raw difference (add 1 to avoid log(0))
+            raw_diff_log = np.log(raw_difference + 1)
+            
+            # Calculate deciles for cutoff_None
+            decile_none = pd.qcut(edges_undirected_bc_gdf['cutoff_None'], 10, labels=False, duplicates='drop') + 1
+            
+            # Calculate deciles for raw difference
+            decile_difference = pd.qcut(raw_difference, 10, labels=False, duplicates='drop') + 1
+            
+            # Calculate change in deciles: decile_None - decile_difference
+            decile_change = decile_none - decile_difference
+            
+            # Plot 1: Raw difference (left column) - sequential colormap with log scale
+            ax_left = axs[row_idx, 0]
+            temp_gdf = edges_undirected_bc_gdf.copy()
+            temp_gdf['raw_diff_log'] = raw_diff_log
+            
+            cmap_raw = temp_gdf.plot(column='raw_diff_log', ax=ax_left, cmap='viridis', legend=True)
+            ax_left.set_title(f'Log(Raw Adjusted BC): cutoff_None - cutoff_{cutoff}', fontsize=12)
+            ax_left.set_axis_off()
+            
+            # Plot 2: Decile change (right column) - diverging colormap
+            ax_right = axs[row_idx, 1]
+            temp_gdf['decile_change'] = decile_change
+            
+            norm_decile = TwoSlopeNorm(vcenter=0, vmin=-5, vmax=5)
+            cmap_decile = temp_gdf.plot(column='decile_change', ax=ax_right, cmap='coolwarm', legend=True, norm=norm_decile)
+            ax_right.set_title(f'Decile Change: decile(cutoff_None) - decile(adjusted)', fontsize=12)
+            ax_right.set_axis_off()
+        
+        fig.suptitle(f'BC Adjustment Comparison: {city_name}', fontsize=16, fontweight='bold')
+        plt.tight_layout(pad=0.5)
+        
+        # Save the plot
+        plt.savefig(f'outputs_igraph/{city_name}_bc_adjustment_comparison.png', dpi=300, bbox_inches='tight')
+        plt.show()
+        plt.close(fig)
+        
+        print(f'Comparison plot created for {city_name}')
+```

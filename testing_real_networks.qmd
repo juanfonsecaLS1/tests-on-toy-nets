@@ -1,5 +1,5 @@
 ---
-title: "Testing Betweenness Centrality on Toy Graphs"
+title: "Testing Betweenness Centrality on Real Networks"
 format: html
 ---
 
