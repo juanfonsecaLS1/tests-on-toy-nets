@@ -76,7 +76,7 @@ for graph_file in graph_files:
     tessellation_nodes.index = nodes_gdf.index
     tessellation_nodes['weight'] = tessellation_nodes.geometry.area
 
-    tessellation_edges = mp.morphological_tessellation(edges_gdf,clip= buffer,)
+    tessellation_edges = mp.morphological_tessellation(edges_gdf,clip= buffer)
     tessellation_edges.index = edges_gdf.index
 
     node_weights = compute_node_weights(edges_gdf, tessellation_edges)
