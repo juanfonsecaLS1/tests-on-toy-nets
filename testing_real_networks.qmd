@@ -140,8 +140,8 @@ for city_info in cities:
         nodes_proj = nodes_gdf.to_crs(nodes_gdf.estimate_utm_crs())
         edges_proj = edges_filtered.to_crs(nodes_proj.crs)
 
-        envelope = nodes_proj.union_all().convex_hull    
-        buffer = envelope.buffer(0.05*(envelope.area/np.pi)**0.5) # Buffering 5% of the equivalent radius of the hull
+        buffer = edges_proj.union_all().buffer(100)    
+        # buffer = envelope.buffer(0.05*(envelope.area/np.pi)**0.5) # Buffering 5% of the equivalent radius of the hull
         
         # Time the following blocks of code to see how long they take to run
 
